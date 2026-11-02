@@ -75,20 +75,20 @@ export async function createWorld(canvas,onProgress,onTick) {
   canvas.addEventListener('pointermove',e=>{if(!drag)return;yaw-=(e.clientX-lastX)*.005;pitch=Math.max(.12,Math.min(1.12,pitch+(e.clientY-lastY)*.004));lastX=e.clientX;lastY=e.clientY;});
   const release=()=>drag=false;canvas.addEventListener('pointerup',release);canvas.addEventListener('lostpointercapture',release);
   canvas.addEventListener('wheel',e=>{if(!active)return;radius=Math.max(3.5,Math.min(18,radius+e.deltaY*.012));e.preventDefault();},{passive:false});
-  document.addEventListener('keydown',e=>{if(!active || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){keys[e.code]=true;e.preventDefault();}});
+  document.addEventListener('keydown',e=>{if(!active || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyR','ShiftLeft','ShiftRight','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){keys[e.code]=true;e.preventDefault();}});
   document.addEventListener('keyup',e=>delete keys[e.code]);
   function clearKeys(){Object.keys(keys).forEach(k=>delete keys[k]);drag=false;}
   window.addEventListener('blur',clearKeys);document.addEventListener('visibilitychange',clearKeys);
-  let frames=0;
   scene.onBeforeRenderObservable.add(()=>{
     const dt=Math.min(.05,engine.getDeltaTime()/1000);
+    if(active)yaw+=((keys.KeyQ?1:0)-(keys.KeyR?1:0))*2*dt;
     const forward=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0),side=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
     let moving=false;
     if(active&&(forward||side)){
       const speed=(keys.ShiftLeft||keys.ShiftRight)?8:4.2,length=Math.hypot(forward,side);
       const dx=(side*Math.cos(yaw)-forward*Math.sin(yaw))/length,dz=(-forward*Math.cos(yaw)-side*Math.sin(yaw))/length;
       const old=hero.position.clone();move(hero.position,dx*speed*dt,dz*speed*dt,boxes);moving=B.Vector3.DistanceSquared(old,hero.position)>.000001;
-      if(moving){hero.rotation.y=Math.atan2(dx,dz);walkTime+=dt*speed*2;}
+      if(moving){const turn=Math.atan2(dx,dz)-hero.rotation.y;hero.rotation.y+=Math.atan2(Math.sin(turn),Math.cos(turn))*(1-Math.exp(-20*dt));walkTime+=dt*speed*2;}
     }
     const running=moving&&(keys.ShiftLeft||keys.ShiftRight);
     for(const [name,node] of Object.entries(limbs)){
@@ -108,7 +108,7 @@ export async function createWorld(canvas,onProgress,onTick) {
     hero.getChildMeshes().forEach(m=>m.visibility=actualRadius<1.2?.18:1);
     for(const t of trees){const offset=t.root.position.add(new B.Vector3(0,5,0)).subtract(focus),along=B.Vector3.Dot(offset,direction);const blocked=along>0&&along<actualRadius+3&&offset.subtract(direction.scale(along)).length()<4;t.meshes.forEach(m=>m.visibility=blocked?.12:1);}
     jets.forEach((m,i)=>m.visibility=.65+.2*Math.sin(performance.now()*.003+i));
-    if(frames++%10===0)onTick({position:hero.position,moving,fps:engine.getFps()});
+    onTick({position:hero.position,moving,fps:engine.getFps()});
   });
   await scene.whenReadyAsync();engine.runRenderLoop(()=>scene.render());window.addEventListener('resize',()=>engine.resize());
   return {engine,scene,hero,camera,buildings,boxes,trees,limbs,

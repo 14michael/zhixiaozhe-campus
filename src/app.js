@@ -1,9 +1,50 @@
 import {createWorld} from './world.js';
 import {BASE,DELTAS,fresh,load,decide} from './state.js';
+import {CASES,selections,choose,outcome} from './missions.js';
 const $=id=>document.getElementById(id);
 let world,state,user='',nearest=null,lastSave=0,dirty=false,storageFailed=false;
 const notify=text=>$('status').textContent=text;
 const editable=()=>!!state&&$('mode').value==='public';
+const scoreNames=['校園信任','學習活力','資源餘裕'];
+let objective=null,uiTime=0;
+function renderMission(){
+  $('mission').hidden=!state;
+  if(!state)return;
+  const picks=selections(state),complete=picks.length===3&&!!state.decision;
+  $('mission-count').textContent=`行動點 ${3-picks.length} / 3`;
+  $('mission-progress').value=picks.length+(state.decision?1:0);
+  $('mission-title').textContent=complete?'首日完成｜你的校園，有了方向':picks.length<3?'拜訪學院，選擇三項優先方案':'回行政大樓，處理工程追加事件';
+  $('mission-scores').textContent=outcome(state).map((v,i)=>`${scoreNames[i]} ${v}`).join(' · ');
+  $('mission-report').hidden=!complete;
+  $('mission-guide').hidden=complete;
+  objective=complete?null:picks.length===3?world.buildings.find(b=>b.id==='admin'):world.buildings.filter(b=>CASES[b.id]&&!picks.some(([id])=>id===b.id)).sort((a,b)=>BABYLON.Vector3.DistanceSquared(a.arrival,world.hero.position)-BABYLON.Vector3.DistanceSquared(b.arrival,world.hero.position))[0];
+}
+function report(){
+  openDialog('校長首日｜成果報告','DAY 01 / 首日任務','你把有限的三個行動點放在哪裡，決定了今天的校園方向。');
+  for(const [id,n] of selections(state)){paragraph(CASES[id].options[n].label,'delta');paragraph(CASES[id].options[n].result);}
+  paragraph(outcome(state).map((v,i)=>`${scoreNames[i]} ${v}`).join(' · '));
+  paragraph('【D級｜遊戲規則】三項數值各從 50 起算，加總所選方案效果；不是現實績效評分。這是首日試玩章節，後續天數尚未開放。','note');
+}
+$('mission-report').onclick=report;
+$('mission-guide').onclick=()=>{if(!editable()||!objective)return;world.go(objective);save();$('game').focus();};
+function collegeDialog(b){
+  const c=CASES[b.id],selected=selections(state).find(([id])=>id===b.id);
+  paragraph(c.story);
+  if(selected){paragraph('已採行：'+c.options[selected[1]].label,'delta');paragraph(c.options[selected[1]].result);return;}
+  if(selections(state).length>=3){paragraph('今天的三個行動點已用完。請回行政大樓完成校務事件，再查看首日成果。');return;}
+  c.options.forEach((option,index)=>{
+    const pick=button(option.label,()=>{
+      if(!editable()||!choose(state,b.id,index))return;
+      save();renderMission();openDialog('方案已啟動','DAY 01 / 行動點 −1',option.result);
+      paragraph(option.effect.map((v,i)=>`${scoreNames[i]} ${v>0?'+':''}${v}`).join(' · '),'delta');
+      button('繼續巡訪',closeDialog);
+      if(selections(state).length===3&&state.decision)button('查看首日成果',report);
+    });
+    pick.dataset.initiative=index;pick.disabled=!editable();
+    const small=document.createElement('small');small.textContent='消耗 1 行動點｜'+option.effect.map((v,i)=>`${scoreNames[i]} ${v>0?'+':''}${v}`).join(' · ');pick.append(small);
+  });
+  paragraph('【D級｜遊戲取捨】首日只有 3 個行動點，同一學院只能選一次；此數值與原有八項校務指標分開計算。','note');
+}
 function save() {
   if(!state || !user)return false;
   state.position=[world.hero.position.x,world.hero.position.z];
@@ -46,7 +87,7 @@ function eventDialog(){
 function applyDecision(choice,opinion='') {
   if(!editable()||state.decision)return;
   if(!decide(state,choice,opinion)){paragraph('請先輸入自訂處理意見。','error');return;}
-  save();renderMetrics();eventDialog();
+  save();renderMetrics();renderMission();eventDialog();if(selections(state).length===3)button('查看首日成果',report);
 }
 function interact(){
   if(!state||!nearest||$('mode').value==='closed')return;
@@ -55,13 +96,13 @@ function interact(){
   openDialog(nearest.kind==='npc'?(b.id==='admin'?'主任秘書':b.name+'院長'):b.name+'｜互動入口',b.id==='admin'?'CAMPUS GOVERNANCE':'COLLEGE / '+b.id.toUpperCase(),`林校長，歡迎來到${b.name}。本次討論：${b.topic}。`);
   for(const point of b.points){const s=document.createElement('span');s.className='badge';s.textContent=point;$('dialog-content').append(s);}
   if(b.id==='admin')button('開啟 EVT-009 校務事件',eventDialog);
-  else paragraph('本次來訪已列入校園探索紀錄。學院任務為示範內容；本版提供入口對話，尚未開放室內探索。','note');
+  else collegeDialog(b);
 }
 $('interact').onclick=interact;
 document.addEventListener('keydown',e=>{if(e.code==='KeyE'&&!e.repeat&&!$('dialog').open&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))interact();});
 function tick({position,fps}) {
-  $('fps').textContent=Math.round(fps)+' FPS';
   if(!state)return;
+  if(performance.now()-uiTime>100){uiTime=performance.now();$('fps').textContent=Math.round(fps)+' FPS';if(objective){const distance=Math.round(Math.hypot(position.x-objective.arrival.x,position.z-objective.arrival.z));$('mission-guide').textContent=`前往 ${objective.short||objective.name} · ${distance} m`;}}
   const current=[position.x,position.z];
   if(editable()&&Math.hypot(current[0]-state.position[0],current[1]-state.position[1])>.001)dirty=true;
   if(dirty&&performance.now()-lastSave>1200)save();
@@ -78,13 +119,13 @@ function enter(){
   if(!world)return;
   if($('mode').value==='closed'){$('err').textContent='此瀏覽器展示已關閉，請先切換為公開體驗或唯讀展示。';return;}
   const id=$('visitor').value.trim().slice(0,40);if(!id){$('err').textContent='請輸入訪客代號';return;}
-  try{const loaded=load(id);state=loaded;user=id;const safe=world.teleport(...state.position);$('login').style.display='none';world.setActive(editable());renderMetrics();if(editable())save();if(!safe)notify('舊位置位於新建築範圍，已移至校門');$('game').focus();}
+  try{const loaded=load(id);state=loaded;user=id;const safe=world.teleport(...state.position);$('login').style.display='none';world.setActive(editable());renderMetrics();renderMission();if(editable())save();if(!safe)notify('舊位置位於新建築範圍，已移至校門');$('game').focus();}
   catch(e){$('err').textContent=e.message;}
 }
 $('enter').onclick=enter;$('visitor').addEventListener('keydown',e=>{if(e.key==='Enter')enter();});
 $('menu-toggle').onclick=()=>{$('overview').hidden=!$('overview').hidden;};
 $('quality').onchange=()=>world?.quality($('quality').value==='low');
-$('help').onclick=()=>{openDialog('校園操作說明','HOW TO EXPLORE','WASD 依視角方向移動，Shift 奔跑。滑鼠在場景拖曳旋轉視角，滾輪調整距離。');paragraph('靠近院長或建築入口按 E 開啟對話。由右側導覽可快速抵達七棟建築；行政大樓主任秘書提供 EVT-009 決策。');paragraph('移動每約 1.2 秒儲存一次，決策及對話立即儲存；重新整理後輸入相同代號可繼續。儲存範圍限相同網址與此瀏覽器。');};
+$('help').onclick=()=>{openDialog('校園操作說明','HOW TO EXPLORE','WASD 移動，Shift 奔跑，Q／R 轉視角。也可拖曳滑鼠與滾輪調整視角。');paragraph('首日目標：從六學院提案中選三項，再完成行政大樓事件。左側任務卡提供快速抵達；每次選擇會消耗一點，並影響首日成果。靠近院長或入口按 E。');paragraph('重新整理後輸入相同代號可繼續。儲存範圍限相同網址與此瀏覽器。');};
 $('mode').onchange=()=>{
   if(state&&dirty)save();world?.setActive(editable()&&!$('dialog').open);
   if($('dialog').open)closeDialog();
@@ -92,7 +133,7 @@ $('mode').onchange=()=>{
   else{$('err').textContent='';if(state)$('login').style.display='none';}
   notify($('mode').value==='public'?'公開體驗':$('mode').value==='view'?'唯讀展示：不可移動、決策或重設':'此瀏覽器展示已關閉');
 };
-$('reset').onclick=()=>{if(!editable())return;openDialog('重設此訪客進度','RESET PROGRESS','此操作會清除目前訪客的決策、指標與探索紀錄。');button('確認重設',()=>{state=fresh();world.teleport(...state.position);save();renderMetrics();closeDialog();});button('取消',closeDialog);};
+$('reset').onclick=()=>{if(!editable())return;openDialog('重設此訪客進度','RESET PROGRESS','此操作會清除目前訪客的決策、指標與探索紀錄。');button('確認重設',()=>{state=fresh();world.teleport(...state.position);save();renderMetrics();renderMission();closeDialog();});button('取消',closeDialog);};
 window.addEventListener('pagehide',()=>{if(editable())save();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&editable())save();});
 renderMetrics();
 try {
