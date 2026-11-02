@@ -1,5 +1,6 @@
 import {createWorld} from './world.js';
 import {createTutorial} from './tutorial.js';
+import {createSemesterUI} from './semester-ui.js';
 import {BASE,DELTAS,fresh,load,decide} from './state.js';
 import {CASES,selections,choose,outcome} from './missions.js';
 const $=id=>document.getElementById(id);
@@ -7,7 +8,7 @@ let world,state,user='',nearest=null,lastSave=0,dirty=false,storageFailed=false;
 const notify=text=>$('status').textContent=text;
 const editable=()=>!!state&&$('mode').value==='public';
 const scoreNames=['校園信任','學習活力','資源餘裕'];
-let objective=null,uiTime=0,tutorial;
+let objective=null,uiTime=0,tutorial,semester;
 function showMetrics(){
   if(!state)return;
   openDialog('到任簡報｜八項校務指標','主任秘書 / 校務現況','林校長，這是目前的校務基準。先了解現況，再決定今天要拜訪哪些學院。');
@@ -19,7 +20,7 @@ function secretaryBriefing(){
   const b=world.buildings.find(b=>b.id==='admin');
   if(Math.hypot(world.hero.position.x-b.npcPosition.x,world.hero.position.z-b.npcPosition.z)>=3.5){notify('請先走近入口旁的主任秘書');return;}
   openDialog('主任秘書','到任報到 / 歡迎林校長','林校長，歡迎到任！先看看八項校務指標，再到各學院聽聽大家的提案。今天有三個行動點，由您決定優先順序。');
-  tutorial.complete(2);button('查看校務指標',showMetrics);button('開啟 EVT-009 校務事件',eventDialog);
+  tutorial.complete(2);button('查看校務指標',showMetrics);button('安排本學期校務',()=>semester.open());button('開啟 EVT-009 校務事件',eventDialog);
 }
 function renderMission(){
   $('mission').hidden=!state||(editable()&&!state.tutorial.paused&&state.tutorial.step<4);
@@ -37,11 +38,13 @@ function report(){
   openDialog('校長首日｜成果報告','DAY 01 / 首日任務','你把有限的三個行動點放在哪裡，決定了今天的校園方向。');
   for(const [id,n] of selections(state)){paragraph(CASES[id].options[n].label,'delta');paragraph(CASES[id].options[n].result);}
   paragraph(outcome(state).map((v,i)=>`${scoreNames[i]} ${v}`).join(' · '));
-  paragraph('【D級｜遊戲規則】三項數值各從 50 起算，加總所選方案效果；不是現實績效評分。這是首日試玩章節，後續天數尚未開放。','note');
+  paragraph('【D級｜遊戲規則】三項數值各從 50 起算，加總所選方案效果；不是現實績效評分。接下來可開始安排招生、師資與學期收支。','note');
+  button('開始學期經營',()=>semester.open());
 }
 $('mission-report').onclick=report;
 $('mission-guide').onclick=()=>{if(!editable()||!objective)return;world.go(objective);save();$('game').focus();};
 function collegeDialog(b){
+  if(['education','management'].includes(b.id))button('查看本學期巡校事項',()=>semester.patrol(b.id));
   const c=CASES[b.id],selected=selections(state).find(([id])=>id===b.id);
   paragraph(c.story);
   if(selected){paragraph('已採行：'+c.options[selected[1]].label,'delta');paragraph(c.options[selected[1]].result);return;}
@@ -74,7 +77,7 @@ function renderMetrics(){
   }
 }
 function openDialog(title,kicker,talk){
-  world?.setActive(false);$('dialog-title').textContent=title;$('dialog-kicker').textContent=kicker;$('talk').textContent=talk;$('dialog-content').replaceChildren();if(!$('dialog').open)$('dialog').showModal();
+  world?.setActive(false);$('dialog-title').textContent=title;$('dialog-kicker').textContent=kicker;$('talk').textContent=talk;$('dialog-content').replaceChildren();if(!$('dialog').open)$('dialog').showModal();$('dialog').scrollTop=0;
 }
 function closeDialog(){ $('dialog').close(); }
 $('close-dialog').onclick=closeDialog;
@@ -137,7 +140,7 @@ function enter(){
   if(!world)return;
   if($('mode').value==='closed'){$('err').textContent='此瀏覽器展示已關閉，請先切換為公開體驗或唯讀展示。';return;}
   const id=$('visitor').value.trim().slice(0,40);if(!id){$('err').textContent='請輸入訪客代號';return;}
-  try{const loaded=load(id);state=loaded;user=id;const safe=world.teleport(...state.position);$('login').style.display='none';world.setActive(editable());renderMetrics();renderMission();tutorial.render();if(editable())save();if(!safe)notify('舊位置位於新建築範圍，已移至校門');$('game').focus();}
+  try{const loaded=load(id);state=loaded;user=id;const safe=world.teleport(...state.position);$('login').style.display='none';world.setActive(editable());renderMetrics();renderMission();tutorial.render();semester.refresh();if(editable())save();if(!safe)notify('舊位置位於新建築範圍，已移至校門');$('game').focus();}
   catch(e){$('err').textContent=e.message;}
 }
 $('enter').onclick=enter;$('visitor').addEventListener('keydown',e=>{if(e.key==='Enter')enter();});
@@ -150,16 +153,18 @@ $('mode').onchange=()=>{
   if($('dialog').open)closeDialog();
   if($('mode').value==='closed'){$('login').style.display='flex';$('err').textContent='此瀏覽器展示已關閉';if(!$('reopen')){const b=document.createElement('button');b.id='reopen';b.textContent='重新開啟本機展示';b.onclick=()=>{$('mode').value='public';$('mode').dispatchEvent(new Event('change'));b.remove();};$('err').after(b);}}
   else{$('err').textContent='';if(state)$('login').style.display='none';}
-  tutorial?.render();
+  tutorial?.render();semester?.refresh();
   notify($('mode').value==='public'?'公開體驗':$('mode').value==='view'?'唯讀展示：不可移動、決策或重設':'此瀏覽器展示已關閉');
 };
-$('reset').onclick=()=>{if(!editable())return;openDialog('重設此訪客進度','RESET PROGRESS','此操作會清除目前訪客的決策、指標與探索紀錄。');button('確認重設',()=>{state=fresh();world.teleport(...state.position);save();renderMetrics();renderMission();tutorial.render();closeDialog();});button('取消',closeDialog);};
+$('reset').onclick=()=>{if(!editable())return;openDialog('重設此訪客進度','RESET PROGRESS','此操作會清除目前訪客的決策、指標與探索紀錄。');button('確認重設',()=>{state=fresh();world.teleport(...state.position);save();renderMetrics();renderMission();tutorial.render();semester.refresh();closeDialog();});button('取消',closeDialog);};
 window.addEventListener('pagehide',()=>{if(editable())save();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&editable())save();});
 renderMetrics();
 try {
   world=await createWorld($('game'),notify,tick);
   tutorial=createTutorial({getState:()=>state,world,editable,save,renderMission,showMetrics});
   tutorial.render();
+  semester=createSemesterUI({getState:()=>state,editable,save,world,openDialog,closeDialog,button,paragraph,notify});
+  semester.refresh();
   for(const [i,b] of world.buildings.entries()){
     const btn=document.createElement('button');btn.dataset.go=b.id;btn.innerHTML=`<span>${String(i+1).padStart(2,'0')}</span>`;btn.append(document.createTextNode(b.short||b.name));btn.onclick=()=>{if(!editable()){notify('請先進入公開體驗');return;}world.go(b);save();$('game').focus();};$('buildings').append(btn);
   }

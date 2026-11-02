@@ -68,6 +68,21 @@ export async function createWorld(canvas,onProgress,onTick) {
   const hero=await model('principal');hero.position.set(0,.08,65);hero.rotation.y=Math.PI;
   const limbs={};hero.getChildTransformNodes().forEach(n=>{if(['armL','armR','legL','legR','elbowL','elbowR','kneeL','kneeR'].includes(n.name))limbs[n.name]=n;});
   for(const b of buildings){const npc=hero.clone(b.npc,null,false);npc.position.copyFrom(b.npcPosition);npc.position.y=.08;npc.rotation.y=b.rotation;b.npc=npc;const label=sign(b.id==='admin'?'主任秘書':b.name+'院長',b.npcPosition.add(new B.Vector3(0,2.7,0)),2.5,.36);label.billboardMode=B.Mesh.BILLBOARDMODE_ALL;}
+  const semesterCrowds={education:[],management:[]},semesterSigns={};
+  function updateSemester(e){
+    const queue=Math.max(0,e.students-140-(e.reports.at(-1)?.plan.meal?80:0));
+    for(const id of ['education','management']){
+      const b=buildings.find(b=>b.id===id),people=semesterCrowds[id];
+      const count=Math.min(8,id==='education'?Math.ceil(e.students/30):Math.ceil(queue/10));
+      while(people.length<count){const n=people.length,npc=hero.clone('semester-'+id+'-'+n,null,false);npc.scaling.setAll(.83);npc.rotation.y=b.rotation;
+        npc.getChildTransformNodes().forEach(node=>{if(/arm|leg|knee|elbow/.test(node.name)){node.rotationQuaternion=null;node.rotation.x=0;}});
+        npc.getChildMeshes().forEach(m=>m.visibility=1);people.push(npc);}
+      people.forEach((npc,i)=>{npc.setEnabled(i<count);npc.position.copyFrom(local(b,-1.8-(i%2)*1.1,b.depth/2+5.8+Math.floor(i/2)*1.1));npc.position.y=.08;});
+      if(semesterSigns[id])semesterSigns[id].dispose(false,true);
+      const text=id==='education'?`教室 ${e.rooms} 間 / 學生 ${e.students} 人 / 缺師 ${Math.max(0,Math.ceil(e.students/30)-e.teachers)}`:`用餐超額 ${queue} 人 / 人流示意`;
+      const label=sign(text,local(b,-1.8,b.depth/2+5.5).add(new B.Vector3(0,3.4,0)),5,.6);label.billboardMode=B.Mesh.BILLBOARDMODE_ALL;semesterSigns[id]=label;
+    }
+  }
   const camera=new B.UniversalCamera('third-person',new B.Vector3(0,5.5,82),scene);camera.minZ=.1;camera.maxZ=650;camera.fov=.92;camera.inputs.clear();
   let yaw=0,pitch=.24,radius=10,actualRadius=10,drag=false,lastX=0,lastY=0,active=false,walkTime=0;
   const keys={};const focus=hero.position.add(new B.Vector3(0,1.65,0));
@@ -111,11 +126,11 @@ export async function createWorld(canvas,onProgress,onTick) {
     onTick({position:hero.position,moving,fps:engine.getFps()});
   });
   await scene.whenReadyAsync();engine.runRenderLoop(()=>scene.render());window.addEventListener('resize',()=>engine.resize());
-  return {engine,scene,hero,camera,buildings,boxes,trees,limbs,
+  return {engine,scene,hero,camera,buildings,boxes,trees,limbs,updateSemester,
     setActive(value){active=value;if(!value)clearKeys();},
     teleport(x,z,heading=0){const safe=safePosition(x,z,boxes);hero.position.set(safe?x:0,.08,safe?z:65);yaw=heading;actualRadius=radius;clearKeys();return safe;},
     go(b){this.teleport(b.arrival.x,b.arrival.z,b.rotation);},
     quality(low){engine.setHardwareScalingLevel(low?1.8:Math.max(1,devicePixelRatio/1.5));scene.shadowsEnabled=!low;},
-    snapshot(){const gl=engine._gl,ext=gl.getExtension('WEBGL_debug_renderer_info');return {engine:B.Engine.Version,webgl:engine.webGLVersion,gpu:ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):'unavailable',buildings:buildings.length,meshes:scene.meshes.length,vertices:scene.getTotalVertices(),activeMeshes:scene.getActiveMeshes().length,drawCalls:sceneInstrumentation.drawCallsCounter.current,cpuFrameMs:sceneInstrumentation.frameTimeCounter.current,gpuFrameMs:instrumentation.gpuFrameTimeCounter.current/1e6,fps:engine.getFps(),camera:[camera.position.x,camera.position.y,camera.position.z],yaw,pitch,radius,actualRadius,position:[hero.position.x,hero.position.z],fadedTrees:trees.filter(t=>t.meshes.some(m=>m.visibility<1)).length};}
+    snapshot(){const gl=engine._gl,ext=gl.getExtension('WEBGL_debug_renderer_info');return {semesterPeople:Object.fromEntries(Object.entries(semesterCrowds).map(([k,v])=>[k,v.filter(n=>n.isEnabled()).length])),engine:B.Engine.Version,webgl:engine.webGLVersion,gpu:ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):'unavailable',buildings:buildings.length,meshes:scene.meshes.length,vertices:scene.getTotalVertices(),activeMeshes:scene.getActiveMeshes().length,drawCalls:sceneInstrumentation.drawCallsCounter.current,cpuFrameMs:sceneInstrumentation.frameTimeCounter.current,gpuFrameMs:instrumentation.gpuFrameTimeCounter.current/1e6,fps:engine.getFps(),camera:[camera.position.x,camera.position.y,camera.position.z],yaw,pitch,radius,actualRadius,position:[hero.position.x,hero.position.z],fadedTrees:trees.filter(t=>t.meshes.some(m=>m.visibility<1)).length};}
   };
 }
