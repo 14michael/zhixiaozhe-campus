@@ -1,3 +1,4 @@
+import {createClassroomUI} from './classroom-ui.js';
 import {createWorld} from './world.js';
 import {createTutorial} from './tutorial.js';
 import {createSemesterUI} from './semester-ui.js';
@@ -8,7 +9,7 @@ let world,state,user='',nearest=null,lastSave=0,dirty=false,storageFailed=false;
 const notify=text=>$('status').textContent=text;
 const editable=()=>!!state&&$('mode').value==='public';
 const scoreNames=['校園信任','學習活力','資源餘裕'];
-let objective=null,uiTime=0,tutorial,semester;
+let objective=null,uiTime=0,tutorial,semester,classroom;
 function showMetrics(){
   if(!state)return;
   openDialog('到任簡報｜八項校務指標','主任秘書 / 校務現況','林校長，這是目前的校務基準。先了解現況，再決定今天要拜訪哪些學院。');
@@ -32,7 +33,7 @@ function renderMission(){
   $('mission-scores').textContent=outcome(state).map((v,i)=>`${scoreNames[i]} ${v}`).join(' · ');
   $('mission-report').hidden=!complete;
   $('mission-guide').hidden=complete;
-  objective=complete?null:picks.length===3?world.buildings.find(b=>b.id==='admin'):world.buildings.filter(b=>CASES[b.id]&&!picks.some(([id])=>id===b.id)).sort((a,b)=>BABYLON.Vector3.DistanceSquared(a.arrival,world.hero.position)-BABYLON.Vector3.DistanceSquared(b.arrival,world.hero.position))[0];
+  objective=complete?null:picks.length===3?world.buildings.find(b=>b.id==='admin'):world.buildings.filter(b=>CASES[b.id]&&!picks.some(([id])=>id===b.id)).sort((a,b)=>a.arrival.distanceToSquared(world.hero.position)-b.arrival.distanceToSquared(world.hero.position))[0];
 }
 function report(){
   openDialog('校長首日｜成果報告','DAY 01 / 首日任務','你把有限的三個行動點放在哪裡，決定了今天的校園方向。');
@@ -44,6 +45,7 @@ function report(){
 $('mission-report').onclick=report;
 $('mission-guide').onclick=()=>{if(!editable()||!objective)return;world.go(objective);save();$('game').focus();};
 function collegeDialog(b){
+  if(b.id==='education'){const visit=button('進入教室巡課',()=>classroom.open());visit.id='classroom-enter';visit.disabled=!editable();paragraph('已完成教室巡課 '+(state.classroom?.visits||0)+' 次。');}
   if(['education','management'].includes(b.id))button('查看本學期巡校事項',()=>semester.patrol(b.id));
   const c=CASES[b.id],selected=selections(state).find(([id])=>id===b.id);
   paragraph(c.story);
@@ -123,7 +125,7 @@ document.addEventListener('keydown',e=>{if(e.code==='KeyE'&&!e.repeat&&!$('dialo
 function tick({position,moving,fps}) {
   if(!state)return;
   tutorial?.tick(position,moving);
-  if(performance.now()-uiTime>100){uiTime=performance.now();$('fps').textContent=Math.round(fps)+' FPS';if(objective){const distance=Math.round(Math.hypot(position.x-objective.arrival.x,position.z-objective.arrival.z));$('mission-guide').textContent=`前往 ${objective.short||objective.name} · ${distance} m`;}}
+  if(performance.now()-uiTime>100){uiTime=performance.now();$('fps').textContent=Math.round(fps)+' FPS';$('aerial-view').disabled=!editable();$('aerial-view').textContent=world.viewMode==='aerial'?'回到校長視角':'全校鳥瞰';if(objective){const distance=Math.round(Math.hypot(position.x-objective.arrival.x,position.z-objective.arrival.z));$('mission-guide').textContent=`前往 ${objective.short||objective.name} · ${distance} m`;}}
   const current=[position.x,position.z];
   if(editable()&&Math.hypot(current[0]-state.position[0],current[1]-state.position[1])>.001)dirty=true;
   if(dirty&&performance.now()-lastSave>1200)save();
@@ -146,9 +148,11 @@ function enter(){
 $('enter').onclick=enter;$('visitor').addEventListener('keydown',e=>{if(e.key==='Enter')enter();});
 $('menu-toggle').onclick=()=>{$('overview').hidden=!$('overview').hidden;};
 $('view-metrics').onclick=showMetrics;
+$('aerial-view').onclick=()=>{if(!state)return;world.setAerial(world.viewMode!=='aerial');};
 $('quality').onchange=()=>world?.quality($('quality').value==='low');
 $('help').onclick=()=>{openDialog('校園操作說明','HOW TO EXPLORE','WASD 移動，Shift 奔跑，Q／R 轉視角。也可拖曳滑鼠與滾輪調整視角。');paragraph('首日目標：從六學院提案中選三項，再完成行政大樓事件。左側任務卡提供快速抵達；每次選擇會消耗一點，並影響首日成果。靠近院長或入口按 E。');paragraph('重新整理後輸入相同代號可繼續。儲存範圍限相同網址與此瀏覽器。');};
 $('mode').onchange=()=>{
+  classroom?.exit();
   if(state&&dirty)save();world?.setActive(editable()&&!$('dialog').open);
   if($('dialog').open)closeDialog();
   if($('mode').value==='closed'){$('login').style.display='flex';$('err').textContent='此瀏覽器展示已關閉';if(!$('reopen')){const b=document.createElement('button');b.id='reopen';b.textContent='重新開啟本機展示';b.onclick=()=>{$('mode').value='public';$('mode').dispatchEvent(new Event('change'));b.remove();};$('err').after(b);}}
@@ -165,6 +169,7 @@ try {
   tutorial.render();
   semester=createSemesterUI({getState:()=>state,editable,save,world,openDialog,closeDialog,button,paragraph,notify});
   semester.refresh();
+  classroom=createClassroomUI({getState:()=>state,editable,save,world,closeDialog,notify});
   for(const [i,b] of world.buildings.entries()){
     const btn=document.createElement('button');btn.dataset.go=b.id;btn.innerHTML=`<span>${String(i+1).padStart(2,'0')}</span>`;btn.append(document.createTextNode(b.short||b.name));btn.onclick=()=>{if(!editable()){notify('請先進入公開體驗');return;}world.go(b);save();$('game').focus();};$('buildings').append(btn);
   }
